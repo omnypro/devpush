@@ -25,6 +25,8 @@ from models import User, UserIdentity, GithubInstallation, Project
 from services.github import GitHubService
 from services.deployment import DeploymentService
 from utils.user import get_user_github_token, get_user_by_provider
+from utils.environment import get_production_environment, is_promote_only
+from utils.push import get_push_commit, is_release_tag, parse_ref
 from utils.urls import safe_redirect
 from config import get_settings, Settings
 
@@ -559,29 +561,41 @@ async def github_webhook(
                     )
                     return Response(status_code=200)
 
-                branch = data["ref"].replace(
-                    "refs/heads/", ""
-                )  # Convert refs/heads/main to main
-                commit_data = {
-                    "sha": data["after"],
-                    "author": {"login": data["pusher"]["name"]},
-                    "commit": {
-                        "message": data["head_commit"]["message"],
-                        "author": {"date": data["head_commit"]["timestamp"]},
-                    },
-                }
+                ref = parse_ref(data.get("ref"))
+                commit_data = get_push_commit(data)
+                if not ref or not commit_data:
+                    logger.info(f"Ignoring push to {data.get('ref')}")
+                    return Response(status_code=200)
+
+                kind, name = ref
+                if kind == "tag" and not is_release_tag(name):
+                    logger.info(f"Ignoring tag {name}")
+                    return Response(status_code=200)
 
                 deployment_service = DeploymentService()
 
                 for project in projects:
                     try:
+                        environment_id = None
+                        if kind == "tag":
+                            environment = get_production_environment(
+                                project.active_environments
+                            )
+                            if not environment or not is_promote_only(environment):
+                                logger.info(
+                                    f"Ignoring tag {name} for project {project.name}: production is not promote-only"
+                                )
+                                continue
+                            environment_id = environment["id"]
+
                         deployment = await deployment_service.create(
                             project=project,
-                            branch=branch,
+                            branch=name,
                             commit=commit_data,
                             db=db,
                             redis_client=redis_client,
                             trigger="webhook",
+                            environment_id=environment_id,
                         )
                         job = await queue.enqueue_job("start_deployment", deployment.id)
                         deployment.job_id = job.job_id
