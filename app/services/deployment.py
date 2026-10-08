@@ -1,5 +1,4 @@
 import os
-import re
 import tempfile
 import yaml
 import aiodocker
@@ -14,6 +13,7 @@ from arq.jobs import Job
 
 from models import Deployment, Alias, Project, User, Domain, Storage, StorageProject
 from utils.environment import get_environment_for_branch
+from utils.alias import alias_subdomains, check_label, environment_subdomain
 from config import Settings, get_settings
 from services.registry import RegistryService
 
@@ -72,46 +72,24 @@ class DeploymentService:
         self, deployment: Deployment, settings: Settings
     ) -> dict[str, str]:
         project = deployment.project
-        values: dict[str, str] = {}
+        environment = project.get_environment_by_id(deployment.environment_id)
+        if not environment and deployment.environment_id != "prod":
+            logger.warning(
+                "Environment %s not found for deployment %s",
+                deployment.environment_id,
+                deployment.id,
+            )
 
-        if deployment.branch:
-            sanitized_branch = re.sub(r"[^a-zA-Z0-9-]", "-", deployment.branch).lower()
-            if sanitized_branch:
-                branch_subdomain = f"{project.slug}-branch-{sanitized_branch}"
-                values["branch_subdomain"] = branch_subdomain
-                values["branch_domain"] = f"{branch_subdomain}.{settings.deploy_domain}"
-                values["branch_url"] = (
-                    f"{settings.url_scheme}://{values['branch_domain']}"
-                )
-
-        env_subdomain = None
-        if deployment.environment_id == "prod":
-            env_subdomain = project.slug
-        else:
-            environment = project.get_environment_by_id(deployment.environment_id)
-            if environment:
-                env_subdomain = f"{project.slug}-env-{environment.get('slug')}"
-            else:
-                logger.warning(
-                    "Environment %s not found for deployment %s",
-                    deployment.environment_id,
-                    deployment.id,
-                )
-
-        env_id_subdomain = f"{project.slug}-env-id-{deployment.environment_id}"
-
-        values["environment_id_subdomain"] = env_id_subdomain
-        values["environment_id_domain"] = f"{env_id_subdomain}.{settings.deploy_domain}"
-        values["environment_id_url"] = (
-            f"{settings.url_scheme}://{values['environment_id_domain']}"
+        subdomains = alias_subdomains(
+            project.slug, deployment.environment_id, environment, deployment.branch
         )
 
-        if env_subdomain:
-            values["environment_subdomain"] = env_subdomain
-            values["environment_domain"] = f"{env_subdomain}.{settings.deploy_domain}"
-            values["environment_url"] = (
-                f"{settings.url_scheme}://{values['environment_domain']}"
-            )
+        values: dict[str, str] = {}
+        for kind, subdomain in subdomains.items():
+            domain = f"{subdomain}.{settings.deploy_domain}"
+            values[f"{kind}_subdomain"] = subdomain
+            values[f"{kind}_domain"] = domain
+            values[f"{kind}_url"] = f"{settings.url_scheme}://{domain}"
 
         return values
 
@@ -208,6 +186,10 @@ class DeploymentService:
         branch_subdomain = alias_domains.get("branch_subdomain")
         env_subdomain = alias_domains.get("environment_subdomain")
         env_id_subdomain = alias_domains.get("environment_id_subdomain")
+
+        for label in (branch_subdomain, env_subdomain, env_id_subdomain):
+            if label:
+                check_label(label)
 
         if branch_subdomain:
             try:
@@ -574,11 +556,7 @@ class DeploymentService:
         settings: Settings,
     ) -> Alias:
         """Rollback an environment to its previous deployment."""
-        subdomain = (
-            project.slug
-            if environment["id"] == "prod"
-            else f"{project.slug}-env-{environment['slug']}"
-        )
+        subdomain = environment_subdomain(project.slug, environment)
 
         alias = (
             await db.execute(select(Alias).where(Alias.subdomain == subdomain))

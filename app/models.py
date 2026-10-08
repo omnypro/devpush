@@ -28,6 +28,7 @@ from typing import override
 from db import Base
 from config import get_settings
 from utils.color import get_color
+from utils.alias import environment_subdomain
 from utils.log import parse_log
 
 FORBIDDEN_TEAM_SLUGS = [
@@ -579,7 +580,8 @@ class Project(Base):
         settings = get_settings()
         if environment_slug == "production":
             return self.hostname
-        return f"{self.slug}-env-{environment_slug}.{settings.deploy_domain}"
+        subdomain = environment_subdomain(self.slug, {"slug": environment_slug})
+        return f"{subdomain}.{settings.deploy_domain}"
 
     def get_environment_url(self, environment_slug: str) -> str:
         """Get environment URL"""
