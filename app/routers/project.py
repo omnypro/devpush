@@ -73,7 +73,11 @@ from pathlib import Path
 from utils.project import get_latest_projects, get_latest_deployments
 from utils.team import get_latest_teams
 from utils.pagination import paginate
-from utils.environment import group_branches_by_environment, get_environment_for_branch
+from utils.environment import (
+    group_branches_by_environment,
+    get_environment_for_branch,
+    is_promote_only,
+)
 from utils.color import COLORS
 from utils.user import get_user_github_token
 
@@ -1162,9 +1166,11 @@ async def project_redeploy(
 
     form: Any = await ProjectDeployForm.from_formdata(request)
 
-    environment = get_environment_for_branch(
-        deployment.branch, project.active_environments
-    )
+    environment = project.get_environment_by_id(deployment.environment_id)
+    if not environment or not is_promote_only(environment):
+        environment = get_environment_for_branch(
+            deployment.branch, project.active_environments
+        )
 
     if environment and request.method == "POST" and await form.validate_on_submit():
         try:
@@ -1190,6 +1196,7 @@ async def project_redeploy(
                 current_user=current_user,
                 db=db,
                 redis_client=redis_client,
+                environment_id=environment["id"],
             )
             job = await queue.enqueue_job("start_deployment", new_deployment.id)
             new_deployment.job_id = job.job_id

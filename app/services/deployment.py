@@ -12,7 +12,7 @@ from arq.connections import ArqRedis
 from arq.jobs import Job
 
 from models import Deployment, Alias, Project, User, Domain, Storage, StorageProject
-from utils.environment import get_environment_for_branch
+from utils.environment import get_environment_for_branch, get_production_environment
 from utils.alias import alias_subdomains, check_label, environment_subdomain
 from config import Settings, get_settings
 from services.registry import RegistryService
@@ -379,12 +379,20 @@ class DeploymentService:
         redis_client: Redis,
         trigger: str = "user",
         current_user: User | None = None,
+        environment_id: str | None = None,
     ) -> Deployment:
         """Create a new deployment."""
 
-        environment = get_environment_for_branch(branch, project.active_environments)
-        if not environment:
-            raise ValueError("No environment found for this branch.")
+        if environment_id:
+            environment = project.get_environment_by_id(environment_id)
+            if not environment or environment.get("status") != "active":
+                raise ValueError("Environment not found.")
+        else:
+            environment = get_environment_for_branch(
+                branch, project.active_environments
+            )
+            if not environment:
+                raise ValueError("No environment found for this branch.")
 
         config = project.config or {}
         runner_slug = config.get("runner") or config.get("image")
@@ -586,46 +594,41 @@ class DeploymentService:
 
         return alias
 
-    # async def promote(
-    #     self,
-    #     environment: dict,
-    #     deployment: Deployment,
-    #     project: Project,
-    #     db: AsyncSession,
-    #     redis_client: Redis,
-    #     settings: Settings,
-    # ) -> Alias:
-    #     """Promote a deployment as current for an environment."""
-    #     subdomain = (
-    #         project.slug
-    #         if environment["id"] == "prod"
-    #         else f"{project.slug}-env-{environment['slug']}"
-    #     )
+    async def promote(
+        self,
+        deployment: Deployment,
+        project: Project,
+        db: AsyncSession,
+        redis_client: Redis,
+        trigger: str = "user",
+        current_user: User | None = None,
+    ) -> Deployment:
+        """Create a production deployment of a deployment's commit."""
+        environment = get_production_environment(project.active_environments)
+        if not environment:
+            raise ValueError("Production environment not found.")
+        if deployment.environment_id == environment["id"]:
+            raise ValueError("Deployment is already in production.")
+        if deployment.conclusion != "succeeded":
+            raise ValueError("Only successful deployments can be promoted.")
 
-    #     alias = (
-    #         await db.execute(select(Alias).where(Alias.subdomain == subdomain))
-    #     ).scalar_one_or_none()
+        meta = deployment.commit_meta or {}
+        commit = {
+            "sha": deployment.commit_sha,
+            "author": {"login": meta.get("author")},
+            "commit": {
+                "message": meta.get("message"),
+                "author": {"date": meta.get("date")},
+            },
+        }
 
-    #     if not alias:
-    #         raise ValueError("No alias found for this environment.")
-
-    #     alias.deployment_id, alias.previous_deployment_id = (
-    #         deployment.id,
-    #         alias.deployment_id,
-    #     )
-    #     await db.commit()
-
-    #     await self.update_traefik_config(project, db, settings)
-
-    #     await redis_client.xadd(
-    #         f"stream:project:{project.id}:updates",
-    #         fields={
-    #             "event_type": "deployment_promotion",
-    #             "environment_id": environment["id"],
-    #             "deployment_id": alias.deployment_id,
-    #             "previous_deployment_id": alias.previous_deployment_id or "",
-    #             "timestamp": datetime.now(timezone.utc).isoformat(),
-    #         },
-    #     )
-
-    #     return alias
+        return await self.create(
+            project=project,
+            branch=deployment.branch,
+            commit=commit,
+            db=db,
+            redis_client=redis_client,
+            trigger=trigger,
+            current_user=current_user,
+            environment_id=environment["id"],
+        )
