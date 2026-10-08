@@ -149,3 +149,29 @@ def test_finalize_error_message():
         Exception("value too long for type character varying(63)")
     )
     assert finalize_error_message(RuntimeError("boom")) == FINALIZE_ERROR
+
+
+def test_pinned_live_alias_sets():
+    # Hand-derived from the pre-fork formulas in services/deployment.py.
+    assert alias_subdomains("cenitlaw", "prod", LEGACY_PROD, "main") == {
+        "branch": "cenitlaw-branch-main",
+        "environment": "cenitlaw",
+        "environment_id": "cenitlaw-env-id-prod",
+    }
+    assert alias_subdomains("certezzadata", "prod", LEGACY_PROD, "main") == {
+        "branch": "certezzadata-branch-main",
+        "environment": "certezzadata",
+        "environment_id": "certezzadata-env-id-prod",
+    }
+    assert alias_subdomains("cenitlaw", STAGING["id"], STAGING, "main") == {
+        "branch": "cenitlaw-branch-main",
+        "environment": "cenitlaw-env-staging",
+        "environment_id": "cenitlaw-env-id-a1b2c3d4",
+    }
+    assert alias_subdomains(
+        "certezzadata", STAGING["id"], STAGING, "feature/Login_Page"
+    ) == {
+        "branch": "certezzadata-branch-feature-login-page",
+        "environment": "certezzadata-env-staging",
+        "environment_id": "certezzadata-env-id-a1b2c3d4",
+    }
