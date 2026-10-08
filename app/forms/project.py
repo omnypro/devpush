@@ -626,6 +626,4 @@ class ProjectDeploymentRollbackForm(StarletteForm):
 
 
 class ProjectDeploymentPromoteForm(StarletteForm):
-    environment_id = HiddenField(_l("Environment ID"), validators=[DataRequired()])
-    deployment_id = HiddenField(_l("Deployment ID"), validators=[DataRequired()])
     submit = SubmitField(_l("Promote"))

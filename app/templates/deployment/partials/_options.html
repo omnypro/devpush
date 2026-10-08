@@ -1,6 +1,6 @@
 {% from "macros/dialog.html" import dialog %}
 {% set can_rollback = deployment.conclusion == 'succeeded' and env_aliases and env_aliases.get(deployment.environment.id) and env_aliases.get(deployment.environment.id).previous_deployment_id == deployment.id %}
-{% set can_promote = deployment.conclusion == 'succeeded' and env_aliases and env_aliases.get('prod') and env_aliases.get('prod').deployment_id != deployment.id %}
+{% set can_promote = deployment.conclusion == 'succeeded' and deployment.environment_id != 'prod' %}
 
 {% call dialog(
   id="dialog-redeploy",
@@ -70,6 +70,30 @@
   {% endcall %}
 {% endif %}
 
+{% if can_promote %}
+  {% call dialog(
+    id="dialog-promote-" ~ deployment.id,
+    title=_("Promote %(commit)s to production?", commit=deployment.commit_sha[:7]),
+    dialog_attrs={"class": "max-w-md"},
+    body_attrs={"class": "space-y-4"}
+  ) %}
+    <p>{{ _('This builds commit <b>%(commit_short_sha)s</b> again as a new production deployment, using the production environment variables.', commit_short_sha=deployment.commit_sha[:7]) | safe }}</p>
+    <div
+      class="space-y-4"
+      hx-get="{{ url_for('project_promote', team_slug=team.slug, project_name=project.name, deployment_id=deployment.id) }}"
+      hx-trigger="dialog:opened from:closest dialog"
+    >
+      <div class="flex items-center border px-4 h-12 rounded-lg">
+        <span class="bg-accent animate-pulse h-4 flex-1 rounded max-w-3/5"></span>
+      </div>
+      <footer class="flex justify-end gap-x-2">
+        <button type="button" class="btn-ghost" onclick="this.closest('dialog').close()">{{ _('Cancel') }}</button>
+        <button type="button" class="btn" disabled>{{ _('Promote') }}</button>
+      </footer>
+    </div>
+  {% endcall %}
+{% endif %}
+
 <button
   type="button"
   role="menuitem"
@@ -84,14 +108,19 @@
   {{ _('Instant rollback') }}
 </button>
 
-{# <button
+<button
+  type="button"
   role="menuitem"
-  @click="$dispatch('dialog:open', { id: 'dialog-promote', deployment_id: '{{ deployment.id }}' })"
+  onclick="
+    const dialog = document.getElementById('dialog-promote-{{ deployment.id }}');
+    dialog.showModal();
+    dialog.dispatchEvent(new Event('dialog:opened'));
+  "
   {% if not can_promote %}disabled{% endif %}
 >
   {% include "icons/chevrons-up.svg" %}
   {{ _('Promote to production') }}
-</button> #}
+</button>
 
 <button
   type="button"

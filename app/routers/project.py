@@ -51,6 +51,7 @@ from forms.project import (
     ProjectBuildAndDeployForm,
     ProjectDeploymentCancelForm,
     ProjectDeploymentRollbackForm,
+    ProjectDeploymentPromoteForm,
     ProjectDomainForm,
     ProjectDomainRemoveForm,
     ProjectDomainVerifyForm,
@@ -77,6 +78,7 @@ from utils.environment import (
     group_branches_by_environment,
     get_environment_for_branch,
     is_promote_only,
+    get_production_environment,
 )
 from utils.color import COLORS
 from utils.user import get_user_github_token
@@ -1369,71 +1371,85 @@ async def project_rollback(
     )
 
 
-# @router.api_route(
-#     "/{team_slug}/projects/{project_name}/deployments/{deployment_id}/promote",
-#     methods=["GET", "POST"],
-#     name="project_promote",
-# )
-# async def project_promote(
-#     request: Request,
-#     project: Project = Depends(get_project_by_name),
-#     current_user: User = Depends(get_current_user),
-#     team_and_membership: tuple[Team, TeamMember] = Depends(get_team_by_slug),
-#     deployment: Deployment = Depends(get_deployment_by_id),
-#     db: AsyncSession = Depends(get_db),
-#     redis_client: Redis = Depends(get_redis_client),
-#     settings: Settings = Depends(get_settings),
-# ):
-#     team, membership = team_and_membership
+@router.api_route(
+    "/{team_slug}/projects/{project_name}/deployments/{deployment_id}/promote",
+    methods=["GET", "POST"],
+    name="project_promote",
+)
+async def project_promote(
+    request: Request,
+    project: Project = Depends(get_project_by_name),
+    current_user: User = Depends(get_current_user),
+    team_and_membership: tuple[Team, TeamMember] = Depends(get_team_by_slug),
+    deployment: Deployment = Depends(get_deployment_by_id),
+    db: AsyncSession = Depends(get_db),
+    redis_client: Redis = Depends(get_redis_client),
+    queue: ArqRedis = Depends(get_queue),
+):
+    team, membership = team_and_membership
 
-#     form: Any = await ProjectDeploymentRollbackForm.from_formdata(request)
+    if deployment.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Deployment not found")
 
-#     if request.method == "POST" and await form.validate_on_submit():
-#         try:
-#             environment = project.get_environment_by_id(form.environment_id.data)
-#             if not environment:
-#                 raise ValueError("Environment not found.")
+    form: Any = await ProjectDeploymentPromoteForm.from_formdata(request)
+    environment = get_production_environment(project.active_environments)
 
-#             deployment = await get_deployment_by_id(form.deployment_id.data, db)
+    if request.method == "POST" and await form.validate_on_submit():
+        try:
+            new_deployment = await DeploymentService().promote(
+                deployment=deployment,
+                project=project,
+                db=db,
+                redis_client=redis_client,
+                current_user=current_user,
+            )
+            job = await queue.enqueue_job("start_deployment", new_deployment.id)
+            new_deployment.job_id = job.job_id
+            await db.commit()
 
-#             await DeploymentService().promote(
-#                 environment=environment,
-#                 deployment=deployment,
-#                 project=project,
-#                 db=db,
-#                 redis_client=redis_client,
-#                 settings=settings,
-#             )
+            flash(
+                request,
+                _(
+                    "Deployment %(new_deployment_id)s created in production.",
+                    new_deployment_id=new_deployment.id[:7],
+                ),
+                "success",
+            )
 
-#             flash(
-#                 request,
-#                 _(
-#                     'Deployment %(deployment_id)s promoted to "%(environment_id)s".',
-#                     deployment_id=deployment.id,
-#                     environment_id=environment["id"],
-#                 ),
-#                 "success",
-#             )
+            return RedirectResponseX(
+                url=str(
+                    request.url_for(
+                        "project_deployment",
+                        team_slug=team.slug,
+                        project_name=project.name,
+                        deployment_id=new_deployment.id,
+                    )
+                ),
+                request=request,
+            )
 
-#         except Exception as e:
-#             logger.error(f"Error rolling back project: {str(e)}")
-#             flash(request, _("Error rolling back project."), "error")
-#     else:
-#         for error in form.errors.values():
-#             for e in error:
-#                 flash(request, _("Rollback failed: %(error)s", error=e), "error")
+        except ValueError as e:
+            flash(request, _("Promote failed: %(error)s", error=str(e)), "error")
+        except Exception as e:
+            logger.error(f"Error promoting deployment: {str(e)}")
+            flash(request, _("Error promoting deployment."), "error")
+    else:
+        for error in form.errors.values():
+            for e in error:
+                flash(request, _("Promote failed: %(error)s", error=e), "error")
 
-#     return TemplateResponse(
-#         request=request,
-#         name="project/partials/_dialog-rollback-form.html",
-#         context={
-#             "current_user": current_user,
-#             "team": team,
-#             "project": project,
-#             "form": form,
-#             "deployment": deployment,
-#         },
-#     )
+    return TemplateResponse(
+        request=request,
+        name="project/partials/_dialog-promote-form.html",
+        context={
+            "current_user": current_user,
+            "team": team,
+            "project": project,
+            "form": form,
+            "deployment": deployment,
+            "environment": environment,
+        },
+    )
 
 
 @router.api_route(
