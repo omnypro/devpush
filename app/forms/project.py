@@ -200,9 +200,7 @@ class ProjectEnvironmentForm(StarletteForm):
             ),
         ],
     )
-    branch = StringField(
-        _l("Branch"), validators=[DataRequired(), Length(min=1, max=255)]
-    )
+    branch = StringField(_l("Branch"), validators=[Length(max=255)])
 
     def __init__(self, *args, project, **kwargs):
         super().__init__(*args, **kwargs)
@@ -232,6 +230,14 @@ class ProjectEnvironmentForm(StarletteForm):
             raise ValidationError(
                 _("This identifier is already in use by another environment.")
             )
+
+    def validate_branch(self, field):
+        field.data = (field.data or "").strip()
+        if field.data:
+            return
+        if self.environment_id.data == "prod":  # type: ignore
+            return
+        raise ValidationError(_("A branch is required."))
 
 
 class ProjectEnvironmentRemoveForm(StarletteForm):
