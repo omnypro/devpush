@@ -1,24 +1,46 @@
+def is_promote_only(environment: dict) -> bool:
+    """Whether an environment has no branch pattern and only changes by promotion."""
+    return not (environment.get("branch") or "").strip()
+
+
+def get_production_environment(environments) -> dict | None:
+    """Find the production environment by its fixed ID."""
+    return next((env for env in environments if env.get("id") == "prod"), None)
+
+
 def get_environment_for_branch(branch, environments) -> dict | None:
     """
     Find the highest priority environment that matches a branch.
-    
+
     Args:
         branch: The branch name
         environments: List of environments in priority order (highest first)
-    
+
     Returns:
         The matching environment or None if no match is found
     """
-    production_env = environments[0]
-    if production_env['branch'] == branch:
+    if not branch:
+        return None
+
+    production_env = get_production_environment(environments)
+    if (
+        production_env
+        and not is_promote_only(production_env)
+        and production_env["branch"] == branch
+    ):
         return production_env
-        
-    for environment in environments[1:]:
-        pattern = environment['branch']
-        
+
+    for environment in environments:
+        if environment.get("id") == "prod":
+            continue
+
+        pattern = environment.get("branch") or ""
+        if not pattern:
+            continue
+
         if pattern == branch:
             return environment
-            
+
         if '*' in pattern:
             if pattern.startswith('*'):
                 if branch.endswith(pattern[1:]):
@@ -30,7 +52,7 @@ def get_environment_for_branch(branch, environments) -> dict | None:
                 prefix, suffix = pattern.split('*', 1)
                 if branch.startswith(prefix) and branch.endswith(suffix):
                     return environment
-                
+
     return None
 
 
