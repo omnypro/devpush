@@ -144,3 +144,58 @@ def test_create_with_unknown_or_inactive_environment_id_fails():
                     environment_id=env_id,
                 )
             )
+
+
+ALIAS_SETTINGS = SimpleNamespace(deploy_domain="stage.respro.dev", url_scheme="https")
+LEGACY_PROD = {"id": "prod", "slug": "production", "branch": "main", "status": "active"}
+
+
+def alias_domains(environment_id, branch, environments, slug="cenitlaw"):
+    project = Project(id="p2", name=slug, slug=slug, environments=environments)
+    deployment = Deployment(
+        project=project,
+        environment_id=environment_id,
+        branch=branch,
+        commit_sha="abc123",
+        commit_meta={},
+    )
+    return DeploymentService().get_alias_domains(deployment, ALIAS_SETTINGS)
+
+
+def test_alias_domains_legacy_prod_with_branch_pins_live_names():
+    assert alias_domains("prod", "main", [LEGACY_PROD, STAGING]) == {
+        "branch_subdomain": "cenitlaw-branch-main",
+        "branch_domain": "cenitlaw-branch-main.stage.respro.dev",
+        "branch_url": "https://cenitlaw-branch-main.stage.respro.dev",
+        "environment_subdomain": "cenitlaw",
+        "environment_domain": "cenitlaw.stage.respro.dev",
+        "environment_url": "https://cenitlaw.stage.respro.dev",
+        "environment_id_subdomain": "cenitlaw-env-id-prod",
+        "environment_id_domain": "cenitlaw-env-id-prod.stage.respro.dev",
+        "environment_id_url": "https://cenitlaw-env-id-prod.stage.respro.dev",
+    }
+
+
+def test_alias_domains_staging_pins_live_names():
+    assert alias_domains(STAGING["id"], "main", [LEGACY_PROD, STAGING]) == {
+        "branch_subdomain": "cenitlaw-branch-main",
+        "branch_domain": "cenitlaw-branch-main.stage.respro.dev",
+        "branch_url": "https://cenitlaw-branch-main.stage.respro.dev",
+        "environment_subdomain": "cenitlaw-env-staging",
+        "environment_domain": "cenitlaw-env-staging.stage.respro.dev",
+        "environment_url": "https://cenitlaw-env-staging.stage.respro.dev",
+        "environment_id_subdomain": "cenitlaw-env-id-a1b2c3d4",
+        "environment_id_domain": "cenitlaw-env-id-a1b2c3d4.stage.respro.dev",
+        "environment_id_url": "https://cenitlaw-env-id-a1b2c3d4.stage.respro.dev",
+    }
+
+
+def test_alias_domains_promote_only_prod_has_no_branch_alias():
+    assert alias_domains("prod", "main", [PROD, STAGING]) == {
+        "environment_subdomain": "cenitlaw",
+        "environment_domain": "cenitlaw.stage.respro.dev",
+        "environment_url": "https://cenitlaw.stage.respro.dev",
+        "environment_id_subdomain": "cenitlaw-env-id-prod",
+        "environment_id_domain": "cenitlaw-env-id-prod.stage.respro.dev",
+        "environment_id_url": "https://cenitlaw-env-id-prod.stage.respro.dev",
+    }

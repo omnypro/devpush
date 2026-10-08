@@ -301,7 +301,7 @@ These guidelines apply to every script under `scripts/` (install/start/stop/rest
 ### Unit Tests
 
 1. **Location**: `app/tests/`, run from the repo root with `uv run --directory app --group dev pytest -q`
-2. **Scope**: Pure helpers in `app/utils/` only. Modules under test must not import `models`, `db` or `config`, because `db.py` builds the database engine at import.
+2. **Scope**: Keep pure-logic tests free of DB and network. Tests that import `models` or services are fine when they use in-memory fixtures and never import `db`, because `db.py` builds the database engine at import.
 3. **Pattern**: Put decision logic (matching, naming, payload parsing) in a `utils/` function and keep routers, services and workers as thin wiring around it.
 
 ### Production Deployment
