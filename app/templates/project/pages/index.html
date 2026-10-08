@@ -46,7 +46,7 @@
                 data-tooltip="{{ _('Branch') }}"
               >
                 {% include "icons/git-branch.svg" %}
-                <span class="truncate">{{ environment.branch }}</span>
+                <span class="truncate">{{ environment.branch or _('Promote only') }}</span>
               </span>
             </li>
           </ul>
