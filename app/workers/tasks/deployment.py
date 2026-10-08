@@ -17,6 +17,7 @@ from arq.connections import ArqRedis
 from services.deployment import DeploymentService
 from services.registry import RegistryService
 from services.loki import LokiService
+from utils.alias import finalize_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -439,14 +440,14 @@ async def finalize_deployment(ctx, deployment_id: str):
                 f"{log_prefix} Inactive deployments cleanup job queued for project {deployment.project_id}."
             )
 
-        except Exception:
+        except Exception as exc:
             logger.error(f"{log_prefix} Error finalizing deployment.", exc_info=True)
             if queue:
                 await queue.enqueue_job(
                     "fail_deployment",
                     deployment_id,
                     "finalize",
-                    "Failed to finalize deployment (aliases/routing). The app may still be running.",
+                    finalize_error_message(exc),
                 )
 
 
