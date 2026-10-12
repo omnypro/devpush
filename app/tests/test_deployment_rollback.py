@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from models import Alias, Domain, Project
+from models import Alias, Deployment, Domain, Project
 from services.deployment import DeploymentService
 from utils.alias import environment_id_subdomain, environment_subdomain
 
@@ -116,10 +116,18 @@ class FakeDB:
         self.domains = domains
         self.succeeded = succeeded
         self.commits = []
+        self.statuses = {}
+        self.missing = set()
 
     async def execute(self, statement):
         entity = statement.column_descriptions[0]["entity"]
         params = statement.compile().params
+        if entity is Deployment:
+            deployment_id = params["id_1"]
+            if deployment_id in self.missing:
+                return Result([])
+            status = self.statuses.get(deployment_id, "running")
+            return Result([SimpleNamespace(id=deployment_id, container_status=status)])
         if entity is Domain:
             return Result(d for d in self.domains if d.status == "active")
         if "subdomain_1" in params:
@@ -184,10 +192,10 @@ def settings(tmp_path):
     )
 
 
-def rollback(db, tmp_path, prod=LEGACY_PROD):
+def rollback(db, tmp_path, prod=LEGACY_PROD, redis=None):
     asyncio.run(
         DeploymentService().rollback(
-            prod, make_project(prod), db, FakeRedis(), settings(tmp_path)
+            prod, make_project(prod), db, redis or FakeRedis(), settings(tmp_path)
         )
     )
 
@@ -326,3 +334,70 @@ def test_promote_moves_custom_domain_and_rollback_moves_it_back(tmp_path):
     assert routers(tmp_path)["routers"]["router-domain-1"]["service"] == (
         "deployment-P2@docker"
     )
+
+
+def refuse(db, tmp_path, redis=None):
+    state = holders(db)
+    with pytest.raises(ValueError, match="no longer running"):
+        rollback(db, tmp_path, redis=redis)
+    assert holders(db) == state
+    assert db.commits == []
+
+
+def assert_traefik_untouched(tmp_path, stamp):
+    path = tmp_path / "project_p1.yml"
+    assert path.read_text() == BEFORE
+    assert path.stat().st_mtime_ns == stamp
+
+
+def refused_with_status(tmp_path, status):
+    db = make_db()
+    render(db, tmp_path)
+    stamp = (tmp_path / "project_p1.yml").stat().st_mtime_ns
+    db.statuses["P1"] = status
+    refuse(db, tmp_path)
+    assert_traefik_untouched(tmp_path, stamp)
+
+
+def test_rollback_refused_when_target_container_stopped(tmp_path):
+    refused_with_status(tmp_path, "stopped")
+
+
+def test_rollback_refused_when_target_container_removed(tmp_path):
+    refused_with_status(tmp_path, "removed")
+
+
+def test_rollback_refused_when_target_container_status_is_null(tmp_path):
+    refused_with_status(tmp_path, None)
+
+
+def test_rollback_refused_when_target_deployment_is_missing(tmp_path):
+    db = make_db()
+    render(db, tmp_path)
+    stamp = (tmp_path / "project_p1.yml").stat().st_mtime_ns
+    db.missing.add("P1")
+    refuse(db, tmp_path)
+    assert_traefik_untouched(tmp_path, stamp)
+
+
+def test_rollback_allowed_when_target_container_running(tmp_path):
+    db = make_db()
+    db.statuses["P1"] = "running"
+    rollback(db, tmp_path)
+    assert holders(db)[SLUG] == ("P1", "P2")
+    assert holders(db)[f"{SLUG}-env-id-prod"] == ("P1", "P2")
+    assert len(db.commits) == 1
+
+
+def test_refused_rollback_writes_no_redis_event(tmp_path):
+    for status in ("stopped", "removed", None):
+        db = make_db()
+        db.statuses["P1"] = status
+        redis = FakeRedis()
+        refuse(db, tmp_path, redis=redis)
+        assert redis.events == []
+    db = make_db()
+    db.missing.add("P1")
+    redis = FakeRedis()
+    refuse(db, tmp_path, redis=redis)
+    assert redis.events == []

@@ -578,6 +578,16 @@ class DeploymentService:
         if not alias or not alias.previous_deployment_id:
             raise ValueError("No previous deployment to roll back to.")
 
+        target = (
+            await db.execute(
+                select(Deployment).where(Deployment.id == alias.previous_deployment_id)
+            )
+        ).scalar_one_or_none()
+        if not target or target.container_status != "running":
+            raise ValueError(
+                "The previous deployment is no longer running, so it can't be rolled back to."
+            )
+
         alias.deployment_id, alias.previous_deployment_id = (
             alias.previous_deployment_id,
             alias.deployment_id,
@@ -587,7 +597,8 @@ class DeploymentService:
             await db.execute(
                 select(Alias).where(
                     Alias.subdomain
-                    == environment_id_subdomain(project.slug, environment["id"])
+                    == environment_id_subdomain(project.slug, environment["id"]),
+                    Alias.type == "environment_id",
                 )
             )
         ).scalar_one_or_none()
