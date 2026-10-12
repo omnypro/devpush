@@ -13,7 +13,12 @@ from arq.jobs import Job
 
 from models import Deployment, Alias, Project, User, Domain, Storage, StorageProject
 from utils.environment import get_environment_for_branch, get_production_environment
-from utils.alias import alias_subdomains, check_label, environment_subdomain
+from utils.alias import (
+    alias_subdomains,
+    check_label,
+    environment_id_subdomain,
+    environment_subdomain,
+)
 from config import Settings, get_settings
 from services.registry import RegistryService
 
@@ -577,6 +582,19 @@ class DeploymentService:
             alias.previous_deployment_id,
             alias.deployment_id,
         )
+
+        id_alias = (
+            await db.execute(
+                select(Alias).where(
+                    Alias.subdomain
+                    == environment_id_subdomain(project.slug, environment["id"])
+                )
+            )
+        ).scalar_one_or_none()
+        if id_alias and id_alias.deployment_id != alias.deployment_id:
+            id_alias.previous_deployment_id = id_alias.deployment_id
+            id_alias.deployment_id = alias.deployment_id
+
         await db.commit()
 
         await self.update_traefik_config(project, db, settings)
