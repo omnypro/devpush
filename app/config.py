@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     job_timeout_seconds: int = 320
     job_completion_wait_seconds: int = 300
     deployment_timeout_seconds: int = 300
+    max_concurrent_builds: int = 2
+    build_wait_seconds: int = 10
     container_delete_grace_seconds: int = 15
     log_stream_grace_seconds: int = 5
     service_uid: int = 1000

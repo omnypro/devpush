@@ -9,6 +9,7 @@ from config import get_settings
 
 from db import AsyncSessionLocal
 from models import Deployment
+from services.build_gate import container_started_at_key, timeout_started_at
 from services.deployment import DeploymentService
 
 logger = logging.getLogger(__name__)
@@ -48,12 +49,11 @@ async def _check_status(
     try:
         settings = get_settings()
         now_utc = datetime.now(timezone.utc)
-        created_at = (
-            deployment.created_at.replace(tzinfo=timezone.utc)
-            if deployment.created_at.tzinfo is None
-            else deployment.created_at
+        started_at = timeout_started_at(
+            deployment.created_at,
+            await redis_pool.get(container_started_at_key(deployment.id)),
         )
-        if (now_utc - created_at).total_seconds() > settings.deployment_timeout_seconds:
+        if (now_utc - started_at).total_seconds() > settings.deployment_timeout_seconds:
             await redis_pool.enqueue_job(
                 "fail_deployment",
                 deployment.id,

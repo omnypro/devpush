@@ -151,7 +151,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for codebase structure.
 | `MAX_MEMORY_MB`                     | Maximum allowed memory override per project. Used only when `DEFAULT_MEMORY_MB` is set. Required to let user customize memory.           |
 | `JOB_TIMEOUT_SECONDS`               | Job timeout (seconds). Default: `320`.                                                                                                   |
 | `JOB_MAX_TRIES`                     | Max retries per background job. Default: `3`.                                                                                            |
-| `DEPLOYMENT_TIMEOUT_SECONDS`        | Deployment timeout (seconds). Default: `300`.                                                                                            |
+| `DEPLOYMENT_TIMEOUT_SECONDS`        | Deployment timeout (seconds), counted from when the container starts. Default: `300`.                                                    |
+| `MAX_CONCURRENT_BUILDS`             | Deployments that may be starting at once. Others wait for a free slot. Default: `2`.                                                     |
+| `BUILD_WAIT_SECONDS`                | How long a waiting deployment sleeps before checking for a free slot again. Default: `10`.                                               |
 | `CONTAINER_DELETE_GRACE_SECONDS`    | Wait before deleting containers after stop/failure to let logs ship. Default: `3`.                                                       |
 | `LOG_STREAM_GRACE_SECONDS`          | Grace window for deployment log streaming (when to connect/close SSE around terminal states). Default: `5`.                              |
 | `LOG_LEVEL`                         | Logging level. Default: `WARNING`.                                                                                                       |
