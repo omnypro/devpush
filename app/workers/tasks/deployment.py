@@ -1,19 +1,21 @@
 import asyncio
 import aiodocker
 import logging
+from datetime import datetime, timezone
 from sqlalchemy import select, true
 from sqlalchemy.orm import joinedload
 from pathlib import Path
 import shlex
 
 from models import Alias, Deployment, Project
-from db import AsyncSessionLocal
+from db import AsyncSessionLocal, engine
 from dependencies import (
     get_redis_client,
     get_github_installation_service,
 )
 from config import get_settings
 from arq.connections import ArqRedis
+from services.build_gate import admit_start, container_started_at_key
 from services.deployment import DeploymentService
 from services.registry import RegistryService
 from services.loki import LokiService
@@ -43,6 +45,38 @@ async def _push_loki_log(
 
 
 async def start_deployment(ctx, deployment_id: str):
+    """Starts a deployment once a build slot is free.
+
+    Builds run inside the runner container, so the number of containers that are
+    still starting is the number of builds. When that is at the limit, the start
+    is queued again a few seconds later instead of piling another build onto the
+    box. The advisory lock keeps simultaneous starts from all passing the check.
+    """
+    settings = get_settings()
+    async with engine.begin() as lock_conn:
+        async with AsyncSessionLocal() as db:
+            verdict = await admit_start(
+                lock_conn, db, deployment_id, settings.max_concurrent_builds
+            )
+
+        if verdict == "start":
+            await _start_deployment(ctx, deployment_id)
+            return
+
+    if verdict == "wait":
+        queue: ArqRedis = ctx["redis"]
+        await queue.enqueue_job(
+            "start_deployment",
+            deployment_id,
+            _defer_by=settings.build_wait_seconds,
+        )
+        logger.info(
+            f"[DeployStart:{deployment_id}] Waiting for a free build slot "
+            f"(limit {settings.max_concurrent_builds})."
+        )
+
+
+async def _start_deployment(ctx, deployment_id: str):
     """Starts a deployment."""
     container = None
     loki: LokiService | None = None
@@ -320,6 +354,17 @@ async def start_deployment(ctx, deployment_id: str):
                     return
 
                 await container.start()
+
+                # The timeout clock runs from here, not from when the deployment
+                # was created, so waiting for a build slot doesn't count against it.
+                try:
+                    await redis_client.set(
+                        container_started_at_key(deployment_id),
+                        datetime.now(timezone.utc).isoformat(),
+                        ex=settings.deployment_timeout_seconds * 4,
+                    )
+                except Exception as e:
+                    logger.warning(f"{log_prefix} Could not record container start: {e}")
 
                 # Save container info
                 deployment.container_id = container.id
