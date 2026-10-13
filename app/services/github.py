@@ -195,13 +195,27 @@ class GitHubService:
     async def get_repository_branches(
         self, user_access_token: str, repo_id: int
     ) -> list:
-        """Get branches for a repository."""
-        response = httpx.get(
-            f"https://api.github.com/repositories/{repo_id}/branches",
-            headers={"Authorization": f"Bearer {user_access_token}"},
-        )
-        response.raise_for_status()
-        return response.json()
+        """Get every branch for a repository, following GitHub's pagination."""
+        per_page = 100
+        page = 1
+        branches: list = []
+
+        while True:
+            response = httpx.get(
+                f"https://api.github.com/repositories/{repo_id}/branches",
+                headers={"Authorization": f"Bearer {user_access_token}"},
+                params={"per_page": per_page, "page": page},
+            )
+            response.raise_for_status()
+            batch = response.json()
+            branches.extend(batch)
+
+            if len(batch) < per_page:
+                break
+
+            page += 1
+
+        return branches
 
     async def get_repository_commits(
         self,
