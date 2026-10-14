@@ -16,6 +16,7 @@ from dependencies import (
 from config import get_settings
 from arq.connections import ArqRedis
 from services.build_gate import admit_start, container_started_at_key
+from services.runner_restart import keep_running_after_reboot
 from services.deployment import DeploymentService
 from services.registry import RegistryService
 from services.loki import LokiService
@@ -426,6 +427,21 @@ async def _start_deployment(ctx, deployment_id: str):
             await loki.client.aclose()
 
 
+async def _keep_runner_across_reboots(deployment: Deployment) -> None:
+    """Let a finished deployment's runner come back after a reboot. Never raises."""
+    if not deployment.container_id:
+        return
+
+    try:
+        settings = get_settings()
+        async with aiodocker.Docker(url=settings.docker_host) as docker_client:
+            await keep_running_after_reboot(docker_client, deployment.container_id)
+    except Exception as error:
+        logger.warning(
+            f"[DeployFinalize:{deployment.id}] Could not set the restart policy: {error}"
+        )
+
+
 async def finalize_deployment(ctx, deployment_id: str):
     """Finalizes a deployment, setting up aliases and updating Traefik config."""
     settings = get_settings()
@@ -475,6 +491,8 @@ async def finalize_deployment(ctx, deployment_id: str):
                 error=None,
                 redis_client=redis_client,
             )
+
+            await _keep_runner_across_reboots(deployment)
 
             # Cleanup inactive deployments
             queue: ArqRedis = ctx["redis"]
