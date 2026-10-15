@@ -16,6 +16,7 @@ from dependencies import (
 from config import get_settings
 from arq.connections import ArqRedis
 from services.build_gate import admit_start, container_started_at_key
+from services.runner_command import runner_command
 from services.runner_restart import keep_running_after_reboot
 from services.deployment import DeploymentService
 from services.registry import RegistryService
@@ -117,8 +118,10 @@ async def _start_deployment(ctx, deployment_id: str):
                     deployment, db, settings
                 )
 
-                # Prepare commands
+                # Prepare commands. `commands` is the setup that runs once; a restart
+                # runs only `resume` and `start_commands` (see runner_command).
                 commands = []
+                resume_commands = ["echo 'Restarting (setup already done)...'"]
 
                 # Step 1: Clone the repository
                 commands.append(
@@ -160,6 +163,7 @@ async def _start_deployment(ctx, deployment_id: str):
                         f"test -d {quoted_root_directory} || {{ printf '\\033[31mError: root directory %s not found\\033[0m\\n' {quoted_root_directory} 1>&2; exit 1; }}"
                     )
                     commands.append(f"cd {quoted_root_directory}")
+                    resume_commands.append(f"cd {quoted_root_directory}")
 
                 # Step 3: Install dependencies
                 if deployment.config.get("build_command"):
@@ -174,8 +178,10 @@ async def _start_deployment(ctx, deployment_id: str):
                     )
 
                 # Step 5: Start the application
-                commands.append("echo 'Starting application...'")
-                commands.append(f"( {deployment.config.get('start_command')} )")
+                start_commands = [
+                    "echo 'Starting application...'",
+                    f"( {deployment.config.get('start_command')} )",
+                ]
 
                 # Setup container configuration
                 container_name = f"runner-{deployment.id[:7]}"
@@ -304,7 +310,15 @@ async def _start_deployment(ctx, deployment_id: str):
                         name=container_name,
                         config={
                             "Image": runner_image,
-                            "Cmd": ["/bin/sh", "-c", " && ".join(commands)],
+                            "Cmd": [
+                                "/bin/sh",
+                                "-c",
+                                runner_command(
+                                    setup=commands,
+                                    resume=resume_commands,
+                                    start=start_commands,
+                                ),
+                            ],
                             "Env": [f"{k}={v}" for k, v in env_vars_dict.items()],
                             "WorkingDir": "/app",
                             "Labels": labels,
