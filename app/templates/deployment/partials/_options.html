@@ -3,7 +3,7 @@
 {% set can_promote = deployment.conclusion == 'succeeded' and deployment.environment_id != 'prod' %}
 
 {% call dialog(
-  id="dialog-redeploy",
+  id="dialog-redeploy-" ~ deployment.id,
   title=_("Redeploy %(commit)s", commit=deployment.commit_sha[:7]),
   dialog_attrs={"class": "max-w-md"},
   body_attrs={"class": "space-y-4"}
@@ -41,7 +41,7 @@
 
 {% if can_rollback %}
   {% call dialog(
-    id="dialog-rollback",
+    id="dialog-rollback-" ~ deployment.id,
     title=_("Rollback to %(deployment_id)s?", deployment_id=deployment.id[:7]),
     dialog_attrs={"class": "max-w-md"},
     body_attrs={"class": "space-y-4"}
@@ -98,7 +98,7 @@
   type="button"
   role="menuitem"
   onclick="
-    const dialog = document.getElementById('dialog-rollback');
+    const dialog = document.getElementById('dialog-rollback-{{ deployment.id }}');
     dialog.showModal();
     dialog.dispatchEvent(new Event('dialog:opened'));
   "
@@ -126,7 +126,7 @@
   type="button"
   role="menuitem"
   onclick="
-    const dialog = document.getElementById('dialog-redeploy');
+    const dialog = document.getElementById('dialog-redeploy-{{ deployment.id }}');
     dialog.showModal();
     dialog.dispatchEvent(new Event('dialog:opened'));
   "
